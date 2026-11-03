@@ -88,6 +88,7 @@ def main():
     cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest()))
     state = json.loads(cipher.decrypt(STATE.read_bytes())) if STATE.exists() else {'offset': 0, 'subscribers': {}, 'seen': {}, 'initialized': False}
     updates = telegram(token, 'getUpdates', {'offset': state['offset'], 'timeout': 0, 'allowed_updates': ['message']})
+    print(f'Telegram updates received: {len(updates)}')
     for update in updates:
         message = update.get('message', {})
         chat = message.get('chat', {})
@@ -101,6 +102,7 @@ def main():
                 state['subscribers'].pop(key, None)
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': 'تم إيقاف التنبيهات. للرجوع ابعت /start'})
         state['offset'] = max(state['offset'], update['update_id'] + 1)
+    print(f'Active subscribers: {len(state["subscribers"])}')
     try:
         current = collect()
         events = changes(state['seen'], current) if state['initialized'] else []
