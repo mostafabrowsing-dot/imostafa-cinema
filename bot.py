@@ -68,11 +68,21 @@ def parse_formats(page):
     return result
 
 def booking_dates(dates):
-    parsed = [datetime.strptime(d, '%Y%m%d') for d in sorted(set(dates))]
-    labels = [d.strftime('%A, %d %B %Y') for d in parsed]
-    if len(parsed) > 1 and all((b - a).days == 1 for a, b in zip(parsed, parsed[1:])):
-        return labels[0] + ' to ' + labels[-1]
-    return '\n'.join(labels)
+    today = datetime.now(ZoneInfo('Africa/Cairo')).date()
+    weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    labels = []
+    for value in sorted(set(dates)):
+        date = datetime.strptime(value, '%Y%m%d').date()
+        distance = (date - today).days
+        if distance == 0:
+            labels.append('Today')
+        elif distance == 1:
+            labels.append('Tomorrow')
+        else:
+            labels.append(f'{weekdays[date.weekday()]} {date.day} {months[date.month - 1]}')
+    return ' | '.join(labels)
+
 
 def make_card(slug, movie, dates, test=False):
     poster = None
