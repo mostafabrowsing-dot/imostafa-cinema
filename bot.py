@@ -208,7 +208,7 @@ def changes(old, current):
         if added:
             events.append(make_card(slug, movie, added))
         entries = new_session_entries(old.get(slug, {}), movie)
-        events.extend(make_time_cards(slug, movie, entries))
+        # Same-day showtime notifications disabled at user's request.
     return events
 
 def telegram(token, method, payload):
@@ -255,8 +255,9 @@ def main():
     from cryptography.fernet import Fernet
     cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest()))
     state = json.loads(cipher.decrypt(STATE.read_bytes())) if STATE.exists() else {'offset': 0, 'subscribers': {}, 'seen': {}, 'initialized': False}
+    state.pop('time_test_requests', None)
     for pending in state['subscribers'].values():
-        pending[:] = [item for item in pending if not (isinstance(item, dict) and item.get('kind') == 'new_times' and item.get('detector_version') != 2)]
+        pending[:] = [item for item in pending if not (isinstance(item, dict) and item.get('kind') == 'new_times')]
     updates = telegram(token, 'getUpdates', {'offset': state['offset'], 'timeout': 0, 'allowed_updates': ['message']})
     print(f'Telegram updates received: {len(updates)}')
     for update in updates:
@@ -268,10 +269,6 @@ def main():
             if command == '/start':
                 state['subscribers'].setdefault(key, [])
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': '🎬 Welcome to iMostafa Cinema!\n\nYou’re now subscribed to booking alerts for VOX Cinemas | City Centre Almaza.\n\n🍿 New movie bookings & pre-bookings\n📅 Newly available booking dates\n🎟 Movie posters, available formats & booking links\n\n/status — View monitoring status\n/test — Preview a movie notification\n/stop — Pause notifications\n\nChecks are requested every minute; notifications may be delayed.'})
-            elif command == '/testtime':
-                requests = state.setdefault('time_test_requests', [])
-                if key not in requests:
-                    requests.append(key)
             elif command == '/test':
                 requests = state.setdefault('test_requests', [])
                 if key not in requests:
@@ -299,21 +296,6 @@ def main():
                 print('Requested test card delivered.')
             except RuntimeError:
                 print('Test card pending; will retry next run.')
-        for target in list(state.get('time_test_requests', [])):
-            available = [(slug, movie) for slug, movie in current.items() if any(movie.get('sessions_by_date', {}).values())]
-            if not available:
-                continue
-            slug, sample = next(((slug, movie) for slug, movie in available if slug == 'dune-part-three'), available[0])
-            date = sorted(d for d, items in sample['sessions_by_date'].items() if items)[0]
-            session = sorted(sample['sessions_by_date'][date].values(), key=lambda item: (item['minutes'], item['format']))[0]
-            card = make_time_cards(slug, sample, [{'date': date, **session}])[0]
-            card['caption'] = '🧪 <b>TEST — Existing showtime used as a preview, not a newly added booking.</b>\n\n' + card['caption']
-            try:
-                deliver(token, target, card)
-                state['time_test_requests'].remove(target)
-                print('Requested new-time test delivered.')
-            except RuntimeError:
-                print('New-time test pending; will retry next run.')
         events = changes(state['seen'], current) if state['initialized'] else []
         state['last_scan_counts'] = {
             'movies_checked': len(current),
@@ -355,7 +337,6 @@ def main():
             f'Movies checked: {movies_checked}\n'
             f'Newly bookable movies: {new_movies}\n'
             f'New booking dates for existing movies: {added_dates}\n'
-            f'New showtimes on existing dates: {new_times}\n'
             'Counts refer to this check only.\n\n'
             'Checks are requested every minute; processing may be delayed.'
         )
