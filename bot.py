@@ -95,7 +95,7 @@ def make_time_cards(slug, movie, entries):
         card = make_card(slug, movie, dates)
         lines = [f"{booking_dates([item['date']])} • {item['time']} • {item['format']}" for item in batch]
         card['caption'] = (
-            '🕒 <b>New time added</b>\n\n'
+            '🕒 <b>New showtime added</b>\n\n'
             f"<b>Movie: {html.escape(movie['title'])}</b>\n"
             'VOX Cinemas | City Centre Almaza\n\n'
             '<b>New showtimes</b>\n' + html.escape('\n'.join(lines))
