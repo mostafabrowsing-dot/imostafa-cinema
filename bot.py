@@ -324,8 +324,8 @@ def main():
         state['last_scan_counts'] = {
             'movies_checked': len(current),
             'new_times': sum(event.get('session_count', 0) for event in events if isinstance(event, dict)),
-            'new_movies': sum(bool(movie['dates']) and not state['seen'].get(slug, {}).get('dates') for slug, movie in current.items()) if baseline_ready else 0,
-            'added_dates': sum(len(added_booking_dates(state['seen'][slug], movie)) for slug, movie in current.items() if state['seen'].get(slug, {}).get('dates')) if baseline_ready else 0,
+            'new_movies': sum(bool(movie['dates']) and slug not in state['seen'] for slug, movie in current.items()) if baseline_ready else 0,
+            'added_dates': sum(len(added_booking_dates(state['seen'][slug], movie)) for slug, movie in current.items() if slug in state['seen']) if baseline_ready else 0,
         }
         for slug, movie in current.items():
             state['seen'][slug] = merge_seen(state['seen'].get(slug, {}), movie)
