@@ -84,6 +84,8 @@ def main():
     if not token:
         print('Waiting for TELEGRAM_BOT_TOKEN secret; no notifications sent.')
         return
+    identity = telegram(token, 'getMe', {})
+    print('Connected bot: @' + identity.get('username', 'unknown'))
     from cryptography.fernet import Fernet
     cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest()))
     state = json.loads(cipher.decrypt(STATE.read_bytes())) if STATE.exists() else {'offset': 0, 'subscribers': {}, 'seen': {}, 'initialized': False}
