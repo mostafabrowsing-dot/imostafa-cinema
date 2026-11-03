@@ -135,10 +135,24 @@ def added_booking_dates(previous, movie):
     return sorted(set(movie.get('dates', [])) - set(known))
 
 
+
+def selected_booking_date(page):
+    for tag in re.findall(r'<input\b[^>]*>', page, re.I):
+        attrs = dict(re.findall(r'([\w-]+)\s*=\s*["\']([^"\']*)["\']', tag))
+        if attrs.get('name') == 'd' and re.fullmatch(r'\d{8}', attrs.get('value', '')):
+            value = attrs['value']
+            datetime.strptime(value, '%Y%m%d')
+            return value
+    raise ValueError('Booking page does not declare its selected date')
+
+
 def collect():
     page = get_page(URL)
     today = datetime.now(ZoneInfo('Africa/Cairo')).strftime('%Y%m%d')
-    dates = {today}
+    default_date = selected_booking_date(page)
+    if default_date < today:
+        raise ValueError('Default booking page is older than Cairo date')
+    dates = {default_date}
     for href in re.findall(r'href="([^"]+)"', page):
         href = html.unescape(href)
         if href.startswith('/showtimes?'):
@@ -147,9 +161,8 @@ def collect():
                 dates.update(d for d in query.get('d', []) if re.fullmatch(r'\d{8}', d) and d >= today)
     result = {}
     def read_date(date):
-        current_page = page if date == today else get_page(URL + '&d=' + date)
-        selected = re.search(r'<input[^>]*name="d"[^>]*value="(\d{8})"', current_page)
-        if not selected or selected[1] != date:
+        current_page = page if date == default_date else get_page(URL + '&d=' + date)
+        if selected_booking_date(current_page) != date:
             raise ValueError('Returned page date does not match requested booking date')
         return date, parse_listed_movies(current_page), parse_formats(current_page), parse_sessions(current_page)
     with ThreadPoolExecutor(max_workers=3) as pool:
