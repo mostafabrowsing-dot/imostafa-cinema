@@ -193,8 +193,8 @@ def main():
     try:
         current = collect()
         for target in list(state.get('test_requests', [])):
-            if 'clayface' in current:
-                item = make_card('clayface', current['clayface'], current['clayface']['dates'], test=True)
+            if 'dune-part-three' in current:
+                item = make_card('dune-part-three', current['dune-part-three'], current['dune-part-three']['dates'], test=True)
             else:
                 slug = next(iter(current))
                 item = make_card(slug, current[slug], current[slug]['dates'], test=True)
