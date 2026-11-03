@@ -176,7 +176,7 @@ def main():
             key = str(chat['id'])
             if command == '/start':
                 state['subscribers'].setdefault(key, [])
-                telegram(token, 'sendMessage', {'chat_id': key, 'text': 'أهلًا بيك في iMostafa Cinema 🎬\nتم الاشتراك في تنبيهات كل أفلام VOX ألماظة: فتح الحجز والحجز المسبق وأيام الحجز الجديدة.\n/stop لإيقاف التنبيهات.\nالتحديثات دورية وقد تتأخر.'})
+                telegram(token, 'sendMessage', {'chat_id': key, 'text': '🎬 Welcome to iMostafa Cinema!\n\nYou’re now subscribed to booking alerts for VOX Cinemas | City Centre Almaza.\n\n🍿 New movie bookings & pre-bookings\n📅 Newly available booking dates\n🎟 Movie posters, available formats & booking links\n\n/status — View monitoring status\n/test — Preview a movie notification\n/stop — Pause notifications\n\nChecks are requested every minute; notifications may be delayed.'})
             elif command == '/test':
                 requests = state.setdefault('test_requests', [])
                 if key not in requests:
