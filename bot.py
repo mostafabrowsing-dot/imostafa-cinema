@@ -205,6 +205,11 @@ def main():
             except RuntimeError:
                 print('Test card pending; will retry next run.')
         events = changes(state['seen'], current) if state['initialized'] else []
+        state['last_scan_counts'] = {
+            'movies_checked': len(current),
+            'new_movies': sum(slug not in state['seen'] for slug in current) if state['initialized'] else 0,
+            'added_dates': sum(len(set(movie['dates']) - set(state['seen'][slug].get('dates', []))) for slug, movie in current.items() if slug in state['seen']) if state['initialized'] else 0,
+        }
         for slug, movie in current.items():
             previous = state['seen'].get(slug, {}).get('dates', [])
             state['seen'][slug] = {'title': movie['title'], 'dates': sorted(set(previous + movie['dates']))}
@@ -224,6 +229,11 @@ def main():
             last_display = datetime.strptime(last, '%d/%m/%Y %H:%M').strftime('%d %b %Y, %H:%M') if last else 'No successful check yet'
         except (ValueError, TypeError):
             last_display = 'Unavailable'
+        metrics = state.get('last_scan_counts', {})
+        valid_counts = last is not None and count == 0 and bool(metrics)
+        movies_checked = metrics.get('movies_checked', 'N/A') if valid_counts else 'N/A'
+        new_movies = metrics.get('new_movies', 'N/A') if valid_counts else 'N/A'
+        added_dates = metrics.get('added_dates', 'N/A') if valid_counts else 'N/A'
         health = 'Operational' if last and count == 0 else 'Awaiting first successful check' if not last else 'Update delayed — retrying'
         text = (
             '🎬 iMostafa Cinema | Monitoring Status\n'
@@ -231,7 +241,10 @@ def main():
             f'Status: {health}\n'
             f'Last successful check: {last_display} (Cairo)\n'
             f'Consecutive failed checks: {count}\n\n'
-            'Automatic alerts: New bookings & added booking dates.\n'
+            f'Movies checked: {movies_checked}\n'
+            f'Newly bookable movies: {new_movies}\n'
+            f'New booking dates for existing movies: {added_dates}\n'
+            'Counts refer to this check only.\n\n'
             'Checks are requested every minute; processing may be delayed.'
         )
         try:
