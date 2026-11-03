@@ -92,6 +92,7 @@ def merge_seen(previous, movie):
     return {
         'title': movie['title'],
         'dates': sorted(set(previous.get('dates', []) + movie['dates'])),
+        'listed_dates': sorted(set(previous.get('listed_dates', previous.get('dates', [])) + movie.get('listed_dates', movie['dates']))),
         'sessions_by_date': sessions,
         'session_baseline_v2': True,
     }
@@ -117,6 +118,25 @@ def make_time_cards(slug, movie, entries):
     return cards
 
 
+
+def parse_listed_movies(page):
+    if 'City Centre Almaza' not in page:
+        raise ValueError('Almaza page missing')
+    movies = {}
+    for article in re.findall(r'<article\b[^>]*class="movie-compare"[^>]*>.*?</article>', page, re.S):
+        slug = re.search(r'data-slug="([^"]+)"', article)
+        title = re.search(r'<h2\b[^>]*>(.*?)</h2>', article, re.S)
+        if slug and title and re.search(r'<h3[^>]*>\s*City Centre Almaza\s*</h3>', article):
+            movies[slug[1]] = clean(title[1])
+    return movies
+
+def added_booking_dates(previous, movie):
+    if not previous.get('dates') and movie.get('dates'):
+        return sorted(set(movie['dates']))
+    known = previous.get('listed_dates', previous.get('dates', []))
+    return sorted(set(movie.get('dates', [])) - set(known))
+
+
 def collect():
     page = get_page(URL)
     today = datetime.now(ZoneInfo('Africa/Cairo')).strftime('%Y%m%d')
@@ -133,12 +153,14 @@ def collect():
         selected = re.search(r'<input[^>]*name="d"[^>]*value="(\d{8})"', current_page)
         if not selected or selected[1] != date:
             raise ValueError('Returned page date does not match requested booking date')
-        return date, parse_movies(current_page), parse_formats(current_page), parse_sessions(current_page)
+        return date, parse_listed_movies(current_page), parse_formats(current_page), parse_sessions(current_page)
     with ThreadPoolExecutor(max_workers=3) as pool:
         for date, movies, formats, sessions in pool.map(read_date, sorted(dates)):
             for slug, title in movies.items():
-                movie = result.setdefault(slug, {'title': title, 'dates': []})
-                movie['dates'].append(date)
+                movie = result.setdefault(slug, {'title': title, 'dates': [], 'listed_dates': []})
+                movie['listed_dates'].append(date)
+                if any(item.get('booking_link_present') for item in sessions.get(slug, {}).values()):
+                    movie['dates'].append(date)
                 movie.setdefault('formats_by_date', {})[date] = formats.get(slug, [])
                 movie.setdefault('sessions_by_date', {})[date] = sessions.get(slug, {})
     if not result:
@@ -147,12 +169,11 @@ def collect():
 
 
 def parse_formats(page):
-    result = {}
-    for article in re.findall(r'<article\b[^>]*class="movie-compare"[^>]*>.*?</article>', page, re.S):
-        slug = re.search(r'data-slug="([^"]+)"', article)
-        if slug:
-            result[slug[1]] = sorted(set(clean(x) for x in re.findall(r'<strong\b[^>]*>(.*?)</strong>', article, re.S)))
-    return result
+    return {
+        slug: sorted({item['format'] for item in sessions.values() if item.get('booking_link_present')})
+        for slug, sessions in parse_sessions(page).items()
+    }
+
 
 def booking_dates(dates):
     today = datetime.now(ZoneInfo('Africa/Cairo')).date()
@@ -185,7 +206,7 @@ def make_card(slug, movie, dates, test=False):
     date_text = html.escape(booking_dates(dates))
     format_text = html.escape(' | '.join(formats) or 'See booking page')
     caption = ('🧪 TEST — رسالة تجريبية وليست فتح حجز جديد\n\n' if test else '')
-    caption += f'<b>Movie: {title}</b>\nVOX Cinemas | City Centre Almaza\n\n<b>Booking dates</b>\n{date_text}\n\n<b>Available formats</b>\n{format_text}'
+    caption += f'<b>Movie: {title}</b>\nVOX Cinemas | City Centre Almaza\n\n<b>Booking dates</b>\n{date_text}\n\n<b>Formats with booking links</b>\n{format_text}\n\nSeat availability is not verified.'
     return {'photo': poster, 'caption': caption, 'url': URL + '&m=' + urllib.parse.quote(slug)}
 
 def deliver(token, chat_id, item):
@@ -204,10 +225,9 @@ def deliver(token, chat_id, item):
 def changes(old, current):
     events = []
     for slug, movie in current.items():
-        added = sorted(set(movie['dates']) - set(old.get(slug, {}).get('dates', [])))
+        added = added_booking_dates(old.get(slug, {}), movie)
         if added:
             events.append(make_card(slug, movie, added))
-        entries = new_session_entries(old.get(slug, {}), movie)
         # Same-day showtime notifications disabled at user's request.
     return events
 
@@ -256,6 +276,9 @@ def main():
     cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest()))
     state = json.loads(cipher.decrypt(STATE.read_bytes())) if STATE.exists() else {'offset': 0, 'subscribers': {}, 'seen': {}, 'initialized': False}
     state.pop('time_test_requests', None)
+    if not state.get('day_baseline_v3'):
+        for pending in state['subscribers'].values():
+            pending[:] = [item for item in pending if not isinstance(item, dict)]
     for pending in state['subscribers'].values():
         pending[:] = [item for item in pending if not (isinstance(item, dict) and item.get('kind') == 'new_times')]
     updates = telegram(token, 'getUpdates', {'offset': state['offset'], 'timeout': 0, 'allowed_updates': ['message']})
@@ -285,10 +308,12 @@ def main():
     try:
         current = collect()
         for target in list(state.get('test_requests', [])):
-            if 'dune-part-three' in current:
+            if 'dune-part-three' in current and current['dune-part-three']['dates']:
                 item = make_card('dune-part-three', current['dune-part-three'], current['dune-part-three']['dates'], test=True)
             else:
-                slug = next(iter(current))
+                slug = next((slug for slug, movie in current.items() if movie['dates']), None)
+                if slug is None:
+                    continue
                 item = make_card(slug, current[slug], current[slug]['dates'], test=True)
             try:
                 deliver(token, target, item)
@@ -296,16 +321,18 @@ def main():
                 print('Requested test card delivered.')
             except RuntimeError:
                 print('Test card pending; will retry next run.')
-        events = changes(state['seen'], current) if state['initialized'] else []
+        baseline_ready = state.get('day_baseline_v3', False)
+        events = changes(state['seen'], current) if state['initialized'] and baseline_ready else []
         state['last_scan_counts'] = {
             'movies_checked': len(current),
             'new_times': sum(event.get('session_count', 0) for event in events if isinstance(event, dict)),
-            'new_movies': sum(slug not in state['seen'] for slug in current) if state['initialized'] else 0,
-            'added_dates': sum(len(set(movie['dates']) - set(state['seen'][slug].get('dates', []))) for slug, movie in current.items() if slug in state['seen']) if state['initialized'] else 0,
+            'new_movies': sum(bool(movie['dates']) and not state['seen'].get(slug, {}).get('dates') for slug, movie in current.items()) if baseline_ready else 0,
+            'added_dates': sum(len(added_booking_dates(state['seen'][slug], movie)) for slug, movie in current.items() if state['seen'].get(slug, {}).get('dates')) if baseline_ready else 0,
         }
         for slug, movie in current.items():
             state['seen'][slug] = merge_seen(state['seen'].get(slug, {}), movie)
         state['initialized'] = True
+        state['day_baseline_v3'] = True
         for pending in state['subscribers'].values():
             pending.extend(events)
         update_health(state, True)
