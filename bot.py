@@ -335,7 +335,8 @@ def main():
             pending.extend(events)
         update_health(state, True)
         print(f'Checked {len(current)} movies; {len(events)} new notifications.')
-    except Exception:
+    except Exception as error:
+        print(f'VOX scan error: {type(error).__name__}: {str(error)[:300]}')
         update_health(state, False)
         print('VOX check failed; previous listings preserved. Next scheduled run will retry.')
     status_requests = state.setdefault('status_requests', [])
