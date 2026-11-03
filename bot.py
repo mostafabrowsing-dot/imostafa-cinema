@@ -187,7 +187,7 @@ def main():
                     requests.append(key)
             elif command == '/stop':
                 state['subscribers'].pop(key, None)
-                telegram(token, 'sendMessage', {'chat_id': key, 'text': 'تم إيقاف التنبيهات. للرجوع ابعت /start'})
+                telegram(token, 'sendMessage', {'chat_id': key, 'text': '🔕 Notifications paused\n\nYou’re no longer subscribed to booking alerts for VOX Cinemas | City Centre Almaza.\n\nSend /start whenever you’re ready to receive alerts again.'})
         state['offset'] = max(state['offset'], update['update_id'] + 1)
     print(f'Active subscribers: {len(state["subscribers"])}')
     try:
