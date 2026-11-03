@@ -43,16 +43,17 @@ def parse_sessions(page):
             continue
         sessions = {}
         auditorium_format = ''
-        for token in re.finditer(r'<strong\b[^>]*>(.*?)</strong>|<a\b([^>]*)>(.*?)</a>', article, re.S):
+        pattern = r'<strong\b[^>]*>(.*?)</strong>|<(a|span)\b([^>]*)>(.*?)</\2>'
+        for token in re.finditer(pattern, article, re.S):
             if token[1] is not None:
                 auditorium_format = clean(token[1])
                 continue
-            attrs = token[2] or ''
-            href = re.search(r'href="([^"]+)"', attrs)
-            if not href or '/booking/' not in href[1]:
+            tag, attrs, body = token[2], token[3], token[4]
+            is_link = tag == 'a' and '/booking/' in attrs
+            is_unavailable = tag == 'span' and 'showtime' in attrs and 'unavailable' in attrs
+            if not (is_link or is_unavailable):
                 continue
-            label = clean(token[3])
-            time = re.fullmatch(r'(\d{1,2}):(\d{2})\s*(am|pm)', label, re.I)
+            time = re.fullmatch(r'(\d{1,2}):(\d{2})\s*(am|pm)', clean(body), re.I)
             if not time or not auditorium_format:
                 raise ValueError('Unrecognized session time or format')
             hour, minute = int(time[1]), int(time[2])
@@ -60,12 +61,19 @@ def parse_sessions(page):
                 raise ValueError('Invalid session time')
             minutes = (hour % 12 + (12 if time[3].lower() == 'pm' else 0)) * 60 + minute
             key = auditorium_format.casefold() + '|' + str(minutes)
-            sessions[key] = {'time': f'{hour}:{minute:02d}{time[3].lower()}', 'minutes': minutes, 'format': auditorium_format}
+            sessions[key] = {
+                'time': f'{hour}:{minute:02d}{time[3].lower()}',
+                'minutes': minutes,
+                'format': auditorium_format,
+                'booking_link_present': is_link,
+            }
         result[slug[1]] = sessions
     return result
 
 def new_session_entries(previous, movie):
     entries = []
+    if not previous.get('session_baseline_v2'):
+        return entries
     known_dates = set(previous.get('dates', []))
     known_sessions = previous.get('sessions_by_date', {})
     for date, sessions in movie.get('sessions_by_date', {}).items():
@@ -73,7 +81,7 @@ def new_session_entries(previous, movie):
         if date not in known_dates or date not in known_sessions:
             continue
         for key, session in sessions.items():
-            if key not in known_sessions[date]:
+            if key not in known_sessions[date] and session.get('booking_link_present', True):
                 entries.append({'date': date, **session})
     return sorted(entries, key=lambda item: (item['date'], item['minutes'], item['format']))
 
@@ -85,6 +93,7 @@ def merge_seen(previous, movie):
         'title': movie['title'],
         'dates': sorted(set(previous.get('dates', []) + movie['dates'])),
         'sessions_by_date': sessions,
+        'session_baseline_v2': True,
     }
 
 def make_time_cards(slug, movie, entries):
@@ -100,7 +109,9 @@ def make_time_cards(slug, movie, entries):
             'VOX Cinemas | City Centre Almaza\n\n'
             '<b>New showtimes</b>\n' + html.escape('\n'.join(lines))
         )
+        card['caption'] += '\n\nSeat availability is not verified.'
         card['kind'] = 'new_times'
+        card['detector_version'] = 2
         card['session_count'] = len(batch)
         cards.append(card)
     return cards
@@ -119,6 +130,9 @@ def collect():
     result = {}
     def read_date(date):
         current_page = page if date == today else get_page(URL + '&d=' + date)
+        selected = re.search(r'<input[^>]*name="d"[^>]*value="(\d{8})"', current_page)
+        if not selected or selected[1] != date:
+            raise ValueError('Returned page date does not match requested booking date')
         return date, parse_movies(current_page), parse_formats(current_page), parse_sessions(current_page)
     with ThreadPoolExecutor(max_workers=3) as pool:
         for date, movies, formats, sessions in pool.map(read_date, sorted(dates)):
@@ -194,8 +208,7 @@ def changes(old, current):
         if added:
             events.append(make_card(slug, movie, added))
         entries = new_session_entries(old.get(slug, {}), movie)
-        # Same-day showtime alerts are paused while date attribution is investigated.
-        # Continue recording sessions without broadcasting potentially false alerts.
+        events.extend(make_time_cards(slug, movie, entries))
     return events
 
 def telegram(token, method, payload):
@@ -242,6 +255,8 @@ def main():
     from cryptography.fernet import Fernet
     cipher = Fernet(base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest()))
     state = json.loads(cipher.decrypt(STATE.read_bytes())) if STATE.exists() else {'offset': 0, 'subscribers': {}, 'seen': {}, 'initialized': False}
+    for pending in state['subscribers'].values():
+        pending[:] = [item for item in pending if not (isinstance(item, dict) and item.get('kind') == 'new_times' and item.get('detector_version') != 2)]
     updates = telegram(token, 'getUpdates', {'offset': state['offset'], 'timeout': 0, 'allowed_updates': ['message']})
     print(f'Telegram updates received: {len(updates)}')
     for update in updates:
