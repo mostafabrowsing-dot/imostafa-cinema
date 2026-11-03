@@ -34,6 +34,78 @@ def parse_movies(page):
             result[slug[1]] = clean(title[1])
     return result
 
+
+def parse_sessions(page):
+    result = {}
+    for article in re.findall(r'<article\b[^>]*class="movie-compare"[^>]*>.*?</article>', page, re.S):
+        slug = re.search(r'data-slug="([^"]+)"', article)
+        if not slug or not re.search(r'<h3[^>]*>\s*City Centre Almaza\s*</h3>', article):
+            continue
+        sessions = {}
+        auditorium_format = ''
+        for token in re.finditer(r'<strong\b[^>]*>(.*?)</strong>|<a\b([^>]*)>(.*?)</a>', article, re.S):
+            if token[1] is not None:
+                auditorium_format = clean(token[1])
+                continue
+            attrs = token[2] or ''
+            href = re.search(r'href="([^"]+)"', attrs)
+            if not href or '/booking/' not in href[1]:
+                continue
+            label = clean(token[3])
+            time = re.fullmatch(r'(\d{1,2}):(\d{2})\s*(am|pm)', label, re.I)
+            if not time or not auditorium_format:
+                raise ValueError('Unrecognized session time or format')
+            hour, minute = int(time[1]), int(time[2])
+            if not 1 <= hour <= 12 or not 0 <= minute <= 59:
+                raise ValueError('Invalid session time')
+            minutes = (hour % 12 + (12 if time[3].lower() == 'pm' else 0)) * 60 + minute
+            key = auditorium_format.casefold() + '|' + str(minutes)
+            sessions[key] = {'time': f'{hour}:{minute:02d}{time[3].lower()}', 'minutes': minutes, 'format': auditorium_format}
+        result[slug[1]] = sessions
+    return result
+
+def new_session_entries(previous, movie):
+    entries = []
+    known_dates = set(previous.get('dates', []))
+    known_sessions = previous.get('sessions_by_date', {})
+    for date, sessions in movie.get('sessions_by_date', {}).items():
+        # Existing dates without session history establish a baseline after upgrade.
+        if date not in known_dates or date not in known_sessions:
+            continue
+        for key, session in sessions.items():
+            if key not in known_sessions[date]:
+                entries.append({'date': date, **session})
+    return sorted(entries, key=lambda item: (item['date'], item['minutes'], item['format']))
+
+def merge_seen(previous, movie):
+    sessions = {date: dict(items) for date, items in previous.get('sessions_by_date', {}).items()}
+    for date, items in movie.get('sessions_by_date', {}).items():
+        sessions.setdefault(date, {}).update(items)
+    return {
+        'title': movie['title'],
+        'dates': sorted(set(previous.get('dates', []) + movie['dates'])),
+        'sessions_by_date': sessions,
+    }
+
+def make_time_cards(slug, movie, entries):
+    cards = []
+    for offset in range(0, len(entries), 6):
+        batch = entries[offset:offset + 6]
+        dates = sorted({item['date'] for item in batch})
+        card = make_card(slug, movie, dates)
+        lines = [f"{booking_dates([item['date']])} • {item['time']} • {item['format']}" for item in batch]
+        card['caption'] = (
+            '🕒 <b>New time added</b>\n\n'
+            f"<b>Movie: {html.escape(movie['title'])}</b>\n"
+            'VOX Cinemas | City Centre Almaza\n\n'
+            '<b>New showtimes</b>\n' + html.escape('\n'.join(lines))
+        )
+        card['kind'] = 'new_times'
+        card['session_count'] = len(batch)
+        cards.append(card)
+    return cards
+
+
 def collect():
     page = get_page(URL)
     today = datetime.now(ZoneInfo('Africa/Cairo')).strftime('%Y%m%d')
@@ -47,13 +119,14 @@ def collect():
     result = {}
     def read_date(date):
         current_page = page if date == today else get_page(URL + '&d=' + date)
-        return date, parse_movies(current_page), parse_formats(current_page)
+        return date, parse_movies(current_page), parse_formats(current_page), parse_sessions(current_page)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for date, movies, formats in pool.map(read_date, sorted(dates)):
+        for date, movies, formats, sessions in pool.map(read_date, sorted(dates)):
             for slug, title in movies.items():
                 movie = result.setdefault(slug, {'title': title, 'dates': []})
                 movie['dates'].append(date)
                 movie.setdefault('formats_by_date', {})[date] = formats.get(slug, [])
+                movie.setdefault('sessions_by_date', {})[date] = sessions.get(slug, {})
     if not result:
         raise ValueError('No bookable movies; keeping previous state')
     return result
@@ -120,6 +193,8 @@ def changes(old, current):
         added = sorted(set(movie['dates']) - set(old.get(slug, {}).get('dates', [])))
         if added:
             events.append(make_card(slug, movie, added))
+        entries = new_session_entries(old.get(slug, {}), movie)
+        events.extend(make_time_cards(slug, movie, entries))
     return events
 
 def telegram(token, method, payload):
@@ -177,6 +252,10 @@ def main():
             if command == '/start':
                 state['subscribers'].setdefault(key, [])
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': '🎬 Welcome to iMostafa Cinema!\n\nYou’re now subscribed to booking alerts for VOX Cinemas | City Centre Almaza.\n\n🍿 New movie bookings & pre-bookings\n📅 Newly available booking dates\n🎟 Movie posters, available formats & booking links\n\n/status — View monitoring status\n/test — Preview a movie notification\n/stop — Pause notifications\n\nChecks are requested every minute; notifications may be delayed.'})
+            elif command == '/testtime':
+                requests = state.setdefault('time_test_requests', [])
+                if key not in requests:
+                    requests.append(key)
             elif command == '/test':
                 requests = state.setdefault('test_requests', [])
                 if key not in requests:
@@ -204,15 +283,30 @@ def main():
                 print('Requested test card delivered.')
             except RuntimeError:
                 print('Test card pending; will retry next run.')
+        for target in list(state.get('time_test_requests', [])):
+            available = [(slug, movie) for slug, movie in current.items() if any(movie.get('sessions_by_date', {}).values())]
+            if not available:
+                continue
+            slug, sample = next(((slug, movie) for slug, movie in available if slug == 'dune-part-three'), available[0])
+            date = sorted(d for d, items in sample['sessions_by_date'].items() if items)[0]
+            session = sorted(sample['sessions_by_date'][date].values(), key=lambda item: (item['minutes'], item['format']))[0]
+            card = make_time_cards(slug, sample, [{'date': date, **session}])[0]
+            card['caption'] = '🧪 <b>TEST — Existing showtime used as a preview, not a newly added booking.</b>\n\n' + card['caption']
+            try:
+                deliver(token, target, card)
+                state['time_test_requests'].remove(target)
+                print('Requested new-time test delivered.')
+            except RuntimeError:
+                print('New-time test pending; will retry next run.')
         events = changes(state['seen'], current) if state['initialized'] else []
         state['last_scan_counts'] = {
             'movies_checked': len(current),
+            'new_times': sum(event.get('session_count', 0) for event in events if isinstance(event, dict)),
             'new_movies': sum(slug not in state['seen'] for slug in current) if state['initialized'] else 0,
             'added_dates': sum(len(set(movie['dates']) - set(state['seen'][slug].get('dates', []))) for slug, movie in current.items() if slug in state['seen']) if state['initialized'] else 0,
         }
         for slug, movie in current.items():
-            previous = state['seen'].get(slug, {}).get('dates', [])
-            state['seen'][slug] = {'title': movie['title'], 'dates': sorted(set(previous + movie['dates']))}
+            state['seen'][slug] = merge_seen(state['seen'].get(slug, {}), movie)
         state['initialized'] = True
         for pending in state['subscribers'].values():
             pending.extend(events)
@@ -234,6 +328,7 @@ def main():
         movies_checked = metrics.get('movies_checked', 'N/A') if valid_counts else 'N/A'
         new_movies = metrics.get('new_movies', 'N/A') if valid_counts else 'N/A'
         added_dates = metrics.get('added_dates', 'N/A') if valid_counts else 'N/A'
+        new_times = metrics.get('new_times', 'N/A') if valid_counts else 'N/A'
         health = 'Operational' if last and count == 0 else 'Awaiting first successful check' if not last else 'Update delayed — retrying'
         text = (
             '🎬 iMostafa Cinema | Monitoring Status\n'
@@ -244,6 +339,7 @@ def main():
             f'Movies checked: {movies_checked}\n'
             f'Newly bookable movies: {new_movies}\n'
             f'New booking dates for existing movies: {added_dates}\n'
+            f'New showtimes on existing dates: {new_times}\n'
             'Counts refer to this check only.\n\n'
             'Checks are requested every minute; processing may be delayed.'
         )
