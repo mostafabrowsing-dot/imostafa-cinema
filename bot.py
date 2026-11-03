@@ -131,8 +131,6 @@ def parse_listed_movies(page):
     return movies
 
 def added_booking_dates(previous, movie):
-    if not previous.get('dates') and movie.get('dates'):
-        return sorted(set(movie['dates']))
     known = previous.get('listed_dates', previous.get('dates', []))
     return sorted(set(movie.get('dates', [])) - set(known))
 
