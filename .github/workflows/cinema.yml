@@ -1,7 +1,7 @@
 name: iMostafa Cinema
 on:
   schedule:
-    - cron: '2-57/5 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
   push:
     paths:
