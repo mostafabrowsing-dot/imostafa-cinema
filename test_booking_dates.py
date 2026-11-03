@@ -23,7 +23,8 @@ class BookingDateTests(unittest.TestCase):
         self.assertEqual(b.parse_formats(page), {'film':[]})
         previous = b.merge_seen({}, {'title':'Film','dates':[],'listed_dates':['20261217']})
         self.assertEqual(previous['listed_dates'], ['20261217'])
-        self.assertEqual(b.added_booking_dates(previous, {'dates':['20261217']}), ['20261217'])
+        self.assertEqual(b.added_booking_dates(previous, {'dates':['20261217']}), [])
+        self.assertEqual(b.added_booking_dates({}, {'dates':['20261217']}), ['20261217'])
 
     def test_same_day_showtime_notifications_stay_disabled(self):
         old = {'title':'Film','dates':['20261217'],'listed_dates':['20261217'],'sessions_by_date':{'20261217':{}},'session_baseline_v2':True}
