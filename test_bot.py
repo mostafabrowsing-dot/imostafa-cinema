@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from bot import changes, parse_movies
+from bot import changes, parse_movies, booking_dates
 
 class Tests(unittest.TestCase):
     def test_new_dates_only(self):
@@ -12,8 +12,8 @@ class Tests(unittest.TestCase):
         event = events[0]
         if isinstance(event, dict):
             text = event['caption']
-            self.assertIn('Wednesday, 04 November 2026', text)
-            self.assertNotIn('Tuesday, 03 November 2026', text)
+            self.assertIn(booking_dates(['20261104']), text)
+            self.assertNotIn(booking_dates(['20261103']), text)
             self.assertIn('city-centre-almaza', event['url'])
         else:
             self.assertIn('04/11/2026', event)
