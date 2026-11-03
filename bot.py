@@ -75,6 +75,24 @@ def telegram(token, method, payload):
     except Exception:
         raise RuntimeError('Telegram request failed; check token and bot permissions') from None
 
+def update_health(state, success):
+    failures = state.get('scan_failures', 0)
+    notice = None
+    if success:
+        if state.get('scan_alerted', False):
+            notice = '✅ متابعة مواعيد VOX ألماظة رجعت تشتغل.'
+        state['scan_failures'] = 0
+        state['scan_alerted'] = False
+        state['last_success'] = datetime.now(ZoneInfo('Africa/Cairo')).strftime('%d/%m/%Y %H:%M')
+    else:
+        state['scan_failures'] = failures + 1
+        if state['scan_failures'] >= 3 and not state.get('scan_alerted', False):
+            notice = '⚠️ تعذر تحديث مواعيد VOX ألماظة في 3 فحوصات متتالية. آخر مواعيد محفوظة كما هي؛ هنحاول تلقائيًا ونبلغك لما المتابعة ترجع.'
+            state['scan_alerted'] = True
+    if notice:
+        for pending in state['subscribers'].values():
+            pending.append(notice)
+
 def main():
     if '--check' in sys.argv:
         current = collect()
@@ -100,6 +118,10 @@ def main():
             if command == '/start':
                 state['subscribers'].setdefault(key, [])
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': 'أهلًا بيك في iMostafa Cinema 🎬\nتم الاشتراك في تنبيهات كل أفلام VOX ألماظة: فتح الحجز والحجز المسبق وأيام الحجز الجديدة.\n/stop لإيقاف التنبيهات.\nالتحديثات دورية وقد تتأخر.'})
+            elif command == '/status':
+                last = state.get('last_success', 'لم يسجل بعد')
+                count = state.get('scan_failures', 0)
+                telegram(token, 'sendMessage', {'chat_id': key, 'text': f'🎬 VOX ألماظة\nآخر فحص ناجح بتوقيت مصر: {last}\nفحوصات فاشلة متتالية: {count}\nالفحص مجدول كل 5 دقائق وقد تتأخر الجدولة.'})
             elif command == '/stop':
                 state['subscribers'].pop(key, None)
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': 'تم إيقاف التنبيهات. للرجوع ابعت /start'})
@@ -114,8 +136,10 @@ def main():
         state['initialized'] = True
         for pending in state['subscribers'].values():
             pending.extend(events)
+        update_health(state, True)
         print(f'Checked {len(current)} movies; {len(events)} new notifications.')
     except Exception:
+        update_health(state, False)
         print('VOX check failed; previous listings preserved. Next scheduled run will retry.')
     for chat_id, pending in state['subscribers'].items():
         while pending:
