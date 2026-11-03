@@ -24,7 +24,7 @@ class SessionTests(unittest.TestCase):
         with patch.object(b, 'get_page', return_value=''):
             events = b.changes({'film': old}, {'film': movie})
         self.assertEqual(len(events), 1)
-        self.assertIn('New time added', events[0]['caption'])
+        self.assertIn('New showtime added', events[0]['caption'])
         self.assertIn('10:30pm', events[0]['caption'])
         merged = b.merge_seen(old, movie)
         self.assertEqual(b.new_session_entries(merged, movie), [])
