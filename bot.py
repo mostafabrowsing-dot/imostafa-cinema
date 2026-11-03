@@ -46,24 +46,70 @@ def collect():
                 dates.update(d for d in query.get('d', []) if re.fullmatch(r'\d{8}', d) and d >= today)
     result = {}
     def read_date(date):
-        return date, parse_movies(page if date == today else get_page(URL + '&d=' + date))
+        current_page = page if date == today else get_page(URL + '&d=' + date)
+        return date, parse_movies(current_page), parse_formats(current_page)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for date, movies in pool.map(read_date, sorted(dates)):
+        for date, movies, formats in pool.map(read_date, sorted(dates)):
             for slug, title in movies.items():
                 movie = result.setdefault(slug, {'title': title, 'dates': []})
                 movie['dates'].append(date)
+                movie.setdefault('formats_by_date', {})[date] = formats.get(slug, [])
     if not result:
         raise ValueError('No bookable movies; keeping previous state')
     return result
+
+
+def parse_formats(page):
+    result = {}
+    for article in re.findall(r'<article\b[^>]*class="movie-compare"[^>]*>.*?</article>', page, re.S):
+        slug = re.search(r'data-slug="([^"]+)"', article)
+        if slug:
+            result[slug[1]] = sorted(set(clean(x) for x in re.findall(r'<strong\b[^>]*>(.*?)</strong>', article, re.S)))
+    return result
+
+def booking_dates(dates):
+    parsed = [datetime.strptime(d, '%Y%m%d') for d in sorted(set(dates))]
+    labels = [d.strftime('%A, %d %B %Y') for d in parsed]
+    if len(parsed) > 1 and all((b - a).days == 1 for a, b in zip(parsed, parsed[1:])):
+        return labels[0] + ' to ' + labels[-1]
+    return '\n'.join(labels)
+
+def make_card(slug, movie, dates, test=False):
+    poster = None
+    try:
+        page = get_page(BASE + '/movies/' + urllib.parse.quote(slug))
+        match = re.search(r'https://assets\.voxcinemas\.com/posters/[^"\s<>]+', page)
+        if match:
+            poster = html.unescape(match[0])
+    except Exception:
+        print('Poster unavailable; using text card.')
+    formats = sorted({f for d in dates for f in movie.get('formats_by_date', {}).get(d, [])})
+    title = html.escape(movie['title'])
+    date_text = html.escape(booking_dates(dates))
+    format_text = html.escape(' | '.join(formats) or 'See booking page')
+    caption = ('🧪 TEST — رسالة تجريبية وليست فتح حجز جديد\n\n' if test else '')
+    caption += f'<b>Movie: {title}</b>\nVOX Cinemas | City Centre Almaza\n\n<b>Booking dates</b>\n{date_text}\n\n<b>Available formats</b>\n{format_text}'
+    return {'photo': poster, 'caption': caption, 'url': URL + '&m=' + urllib.parse.quote(slug)}
+
+def deliver(token, chat_id, item):
+    if isinstance(item, str):
+        return telegram(token, 'sendMessage', {'chat_id': chat_id, 'text': item, 'disable_web_page_preview': True})
+    markup = {'inline_keyboard': [[{'text': 'Book tickets', 'url': item['url']}]]}
+    caption = item['caption']
+    if item.get('photo') and len(caption) <= 1024:
+        try:
+            return telegram(token, 'sendPhoto', {'chat_id': chat_id, 'photo': item['photo'], 'caption': caption, 'parse_mode': 'HTML', 'reply_markup': markup})
+        except RuntimeError:
+            print('Photo delivery failed; trying text card.')
+    return telegram(token, 'sendMessage', {'chat_id': chat_id, 'text': caption, 'parse_mode': 'HTML', 'reply_markup': markup, 'disable_web_page_preview': True})
+
 
 def changes(old, current):
     events = []
     for slug, movie in current.items():
         added = sorted(set(movie['dates']) - set(old.get(slug, {}).get('dates', [])))
         if added:
-            label = '🎬 فتح حجز فيلم في ألماظة' if slug not in old else '📅 أيام حجز جديدة في ألماظة'
-            dates = ', '.join(datetime.strptime(d, '%Y%m%d').strftime('%d/%m/%Y') for d in added)
-            events.append(f"{label}\n{movie['title']}\n{dates}\n{URL}&m={urllib.parse.quote(slug)}")
+            events.append(make_card(slug, movie, added))
     return events
 
 def telegram(token, method, payload):
@@ -132,6 +178,12 @@ def main():
     print(f'Active subscribers: {len(state["subscribers"])}')
     try:
         current = collect()
+        preview_id = 'clayface-card-preview-v1'
+        if not state.get(preview_id) and len(state['subscribers']) == 1 and 'clayface' in current:
+            target = next(iter(state['subscribers']))
+            state['subscribers'][target].append(make_card('clayface', current['clayface'], current['clayface']['dates'], test=True))
+            state[preview_id] = True
+            print('Queued requested test card for sole existing subscriber.')
         events = changes(state['seen'], current) if state['initialized'] else []
         for slug, movie in current.items():
             previous = state['seen'].get(slug, {}).get('dates', [])
@@ -157,7 +209,7 @@ def main():
     for chat_id, pending in state['subscribers'].items():
         while pending:
             try:
-                telegram(token, 'sendMessage', {'chat_id': chat_id, 'text': pending[0], 'disable_web_page_preview': True})
+                deliver(token, chat_id, pending[0])
                 pending.pop(0)
             except RuntimeError:
                 print('Delivery pending; will retry next run.')
