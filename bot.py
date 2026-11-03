@@ -7,6 +7,7 @@ import re
 import sys
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -44,11 +45,13 @@ def collect():
             if query.get('c') == ['city-centre-almaza']:
                 dates.update(d for d in query.get('d', []) if re.fullmatch(r'\d{8}', d) and d >= today)
     result = {}
-    for date in sorted(dates):
-        current = page if date == today else get_page(URL + '&d=' + date)
-        for slug, title in parse_movies(current).items():
-            movie = result.setdefault(slug, {'title': title, 'dates': []})
-            movie['dates'].append(date)
+    def read_date(date):
+        return date, parse_movies(page if date == today else get_page(URL + '&d=' + date))
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for date, movies in pool.map(read_date, sorted(dates)):
+            for slug, title in movies.items():
+                movie = result.setdefault(slug, {'title': title, 'dates': []})
+                movie['dates'].append(date)
     if not result:
         raise ValueError('No bookable movies; keeping previous state')
     return result
@@ -119,9 +122,9 @@ def main():
                 state['subscribers'].setdefault(key, [])
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': 'أهلًا بيك في iMostafa Cinema 🎬\nتم الاشتراك في تنبيهات كل أفلام VOX ألماظة: فتح الحجز والحجز المسبق وأيام الحجز الجديدة.\n/stop لإيقاف التنبيهات.\nالتحديثات دورية وقد تتأخر.'})
             elif command == '/status':
-                last = state.get('last_success', 'لم يسجل بعد')
-                count = state.get('scan_failures', 0)
-                telegram(token, 'sendMessage', {'chat_id': key, 'text': f'🎬 VOX ألماظة\nآخر فحص ناجح بتوقيت مصر: {last}\nفحوصات فاشلة متتالية: {count}\nالفحص مجدول كل 5 دقائق وقد تتأخر الجدولة.'})
+                requests = state.setdefault('status_requests', [])
+                if key not in requests:
+                    requests.append(key)
             elif command == '/stop':
                 state['subscribers'].pop(key, None)
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': 'تم إيقاف التنبيهات. للرجوع ابعت /start'})
@@ -141,6 +144,16 @@ def main():
     except Exception:
         update_health(state, False)
         print('VOX check failed; previous listings preserved. Next scheduled run will retry.')
+    status_requests = state.setdefault('status_requests', [])
+    for chat_id in list(status_requests):
+        last = state.get('last_success', 'لم يسجل بعد')
+        count = state.get('scan_failures', 0)
+        text = f'🎬 VOX ألماظة\nآخر فحص ناجح بتوقيت مصر: {last}\nفحوصات فاشلة متتالية: {count}\nالوقت المعروض يشمل نتيجة الفحص في هذا التشغيل. قد يتأخر بدء التشغيل.'
+        try:
+            telegram(token, 'sendMessage', {'chat_id': chat_id, 'text': text})
+            status_requests.remove(chat_id)
+        except RuntimeError:
+            print('Status reply pending; will retry next run.')
     for chat_id, pending in state['subscribers'].items():
         while pending:
             try:
