@@ -1,0 +1,46 @@
+name: iMostafa Cinema
+on:
+  schedule:
+    - cron: '2-57/5 * * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'bot.py'
+      - 'test_bot.py'
+      - '.github/workflows/cinema.yml'
+permissions:
+  contents: write
+concurrency:
+  group: cinema-bot
+  cancel-in-progress: false
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install cryptography==46.0.3
+      - run: python -m unittest -v
+      - name: Verify VOX access before setup
+        if: env.TELEGRAM_BOT_TOKEN == ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python bot.py --check
+      - name: Run monitor
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python bot.py
+      - name: Save encrypted state
+        run: |
+          if [ -f state.enc ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.enc
+            if ! git diff --cached --quiet; then
+              git commit -m "Save encrypted cinema bot state"
+              git push
+            fi
+          fi
