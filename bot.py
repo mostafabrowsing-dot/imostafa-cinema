@@ -167,6 +167,10 @@ def main():
             if command == '/start':
                 state['subscribers'].setdefault(key, [])
                 telegram(token, 'sendMessage', {'chat_id': key, 'text': 'أهلًا بيك في iMostafa Cinema 🎬\nتم الاشتراك في تنبيهات كل أفلام VOX ألماظة: فتح الحجز والحجز المسبق وأيام الحجز الجديدة.\n/stop لإيقاف التنبيهات.\nالتحديثات دورية وقد تتأخر.'})
+            elif command == '/test':
+                requests = state.setdefault('test_requests', [])
+                if key not in requests:
+                    requests.append(key)
             elif command == '/status':
                 requests = state.setdefault('status_requests', [])
                 if key not in requests:
@@ -178,12 +182,18 @@ def main():
     print(f'Active subscribers: {len(state["subscribers"])}')
     try:
         current = collect()
-        preview_id = 'clayface-card-preview-v1'
-        if not state.get(preview_id) and len(state['subscribers']) == 1 and 'clayface' in current:
-            target = next(iter(state['subscribers']))
-            state['subscribers'][target].append(make_card('clayface', current['clayface'], current['clayface']['dates'], test=True))
-            state[preview_id] = True
-            print('Queued requested test card for sole existing subscriber.')
+        for target in list(state.get('test_requests', [])):
+            if 'clayface' in current:
+                item = make_card('clayface', current['clayface'], current['clayface']['dates'], test=True)
+            else:
+                slug = next(iter(current))
+                item = make_card(slug, current[slug], current[slug]['dates'], test=True)
+            try:
+                deliver(token, target, item)
+                state['test_requests'].remove(target)
+                print('Requested test card delivered.')
+            except RuntimeError:
+                print('Test card pending; will retry next run.')
         events = changes(state['seen'], current) if state['initialized'] else []
         for slug, movie in current.items():
             previous = state['seen'].get(slug, {}).get('dates', [])
