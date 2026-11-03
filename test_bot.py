@@ -1,14 +1,23 @@
 import unittest
+from unittest.mock import patch
 from bot import changes, parse_movies
 
 class Tests(unittest.TestCase):
     def test_new_dates_only(self):
         old = {'film': {'title': 'Film', 'dates': ['20261103']}}
         current = {'film': {'title': 'Film', 'dates': ['20261103', '20261104']}}
-        events = changes(old, current)
+        with patch('bot.get_page', return_value=''):
+            events = changes(old, current)
         self.assertEqual(len(events), 1)
-        self.assertIn('04/11/2026', events[0])
-        self.assertNotIn('03/11/2026', events[0])
+        event = events[0]
+        if isinstance(event, dict):
+            text = event['caption']
+            self.assertIn('Wednesday, 04 November 2026', text)
+            self.assertNotIn('Tuesday, 03 November 2026', text)
+            self.assertIn('city-centre-almaza', event['url'])
+        else:
+            self.assertIn('04/11/2026', event)
+            self.assertNotIn('03/11/2026', event)
         self.assertEqual(changes(current, current), [])
 
     def test_only_bookable_almaza(self):
