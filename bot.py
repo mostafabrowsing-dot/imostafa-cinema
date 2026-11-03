@@ -218,9 +218,22 @@ def main():
         print('VOX check failed; previous listings preserved. Next scheduled run will retry.')
     status_requests = state.setdefault('status_requests', [])
     for chat_id in list(status_requests):
-        last = state.get('last_success', 'لم يسجل بعد')
+        last = state.get('last_success')
         count = state.get('scan_failures', 0)
-        text = f'🎬 VOX ألماظة\nآخر فحص ناجح بتوقيت مصر: {last}\nفحوصات فاشلة متتالية: {count}\nالوقت المعروض يشمل نتيجة الفحص في هذا التشغيل. قد يتأخر بدء التشغيل.'
+        try:
+            last_display = datetime.strptime(last, '%d/%m/%Y %H:%M').strftime('%d %b %Y, %H:%M') if last else 'No successful check yet'
+        except (ValueError, TypeError):
+            last_display = 'Unavailable'
+        health = 'Operational' if last and count == 0 else 'Awaiting first successful check' if not last else 'Update delayed — retrying'
+        text = (
+            '🎬 iMostafa Cinema | Monitoring Status\n'
+            'VOX Cinemas • City Centre Almaza\n\n'
+            f'Status: {health}\n'
+            f'Last successful check: {last_display} (Cairo)\n'
+            f'Consecutive failed checks: {count}\n\n'
+            'Automatic alerts: New bookings & added booking dates.\n'
+            'Checks are requested every minute; processing may be delayed.'
+        )
         try:
             telegram(token, 'sendMessage', {'chat_id': chat_id, 'text': text})
             status_requests.remove(chat_id)
