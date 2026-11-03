@@ -22,7 +22,8 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]['time'], '10:30pm')
         with patch.object(b, 'get_page', return_value=''):
-            events = b.changes({'film': old}, {'film': movie})
+            events = b.make_time_cards('film', movie, entries)
+            self.assertEqual(b.changes({'film': old}, {'film': movie}), [])
         self.assertEqual(len(events), 1)
         self.assertIn('New showtime added', events[0]['caption'])
         self.assertIn('10:30pm', events[0]['caption'])
