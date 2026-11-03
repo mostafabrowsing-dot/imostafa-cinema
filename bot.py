@@ -194,7 +194,8 @@ def changes(old, current):
         if added:
             events.append(make_card(slug, movie, added))
         entries = new_session_entries(old.get(slug, {}), movie)
-        events.extend(make_time_cards(slug, movie, entries))
+        # Same-day showtime alerts are paused while date attribution is investigated.
+        # Continue recording sessions without broadcasting potentially false alerts.
     return events
 
 def telegram(token, method, payload):
