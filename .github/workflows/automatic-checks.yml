@@ -36,6 +36,17 @@ jobs:
             git add state.enc
             if ! git diff --cached --quiet; then
               git commit -m "Save encrypted cinema bot state"
-              git push
+              for attempt in 1 2 3 4 5; do
+                if timeout 45s git push origin HEAD:main; then
+                  echo "Encrypted state saved successfully."
+                  exit 0
+                fi
+                if [ "$attempt" -eq 5 ]; then
+                  echo "::error::Could not save encrypted state after 5 attempts."
+                  exit 1
+                fi
+                echo "::warning::State upload failed; retrying the same commit (attempt $attempt/5)."
+                sleep $((attempt * 3))
+              done
             fi
           fi
