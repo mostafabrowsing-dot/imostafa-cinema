@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from bot import changes, parse_movies, booking_dates
+from bot import changes, parse_movies, booking_dates, update_health, OWNER_CHAT_ID
 
 class Tests(unittest.TestCase):
     def test_new_dates_only(self):
@@ -19,6 +19,17 @@ class Tests(unittest.TestCase):
             self.assertIn('04/11/2026', event)
             self.assertNotIn('03/11/2026', event)
         self.assertEqual(changes(current, current), [])
+
+    def test_health_notices_go_to_owner_only(self):
+        state = {'subscribers': {OWNER_CHAT_ID: [], '12345': []}, 'scan_failures': 2}
+        update_health(state, False)
+        self.assertEqual(len(state['subscribers'][OWNER_CHAT_ID]), 1)
+        self.assertIn('Unable to update', state['subscribers'][OWNER_CHAT_ID][0])
+        self.assertEqual(state['subscribers']['12345'], [])
+        update_health(state, True)
+        self.assertEqual(len(state['subscribers'][OWNER_CHAT_ID]), 2)
+        self.assertIn('working again', state['subscribers'][OWNER_CHAT_ID][1])
+        self.assertEqual(state['subscribers']['12345'], [])
 
     def test_only_bookable_almaza(self):
         page = '<article class="movie-compare" data-slug="film"><h2>Film</h2><h3>City Centre Almaza</h3><a href="/booking/1">Book</a></article>'

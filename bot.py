@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 BASE = 'https://egy.voxcinemas.com'
 URL = BASE + '/showtimes?c=city-centre-almaza'
 STATE = Path('state.enc')
+OWNER_CHAT_ID = '9218272814'  # Health notices (outage and recovery) go to the owner only, not to every subscriber.
 
 def get_page(url):
     with urllib.request.urlopen(url, timeout=60) as r:
@@ -274,8 +275,9 @@ def update_health(state, success):
             notice = '⚠️ Unable to update VOX City Centre Almaza showtimes in 3 consecutive checks. The last saved showtimes remain unchanged. Monitoring will keep retrying automatically, and you will be notified when it resumes.'
             state['scan_alerted'] = True
     if notice:
-        for pending in state['subscribers'].values():
-            pending.append(notice)
+        owner_pending = state['subscribers'].get(OWNER_CHAT_ID)
+        if owner_pending is not None:
+            owner_pending.append(notice)
 
 def main():
     if '--check' in sys.argv:
