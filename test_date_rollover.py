@@ -40,5 +40,14 @@ class RolloverTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'older'):
                 b.collect()
 
+    def test_stale_default_with_fresh_links_scans_links(self):
+        default = page('20261102', '<a href="/showtimes?c=city-centre-almaza&amp;d=20261103">Tue 3 Nov</a>')
+        def fetch(url):
+            return page('20261103') if '&d=20261103' in url else default
+        with patch.object(b, 'datetime', CairoClock), patch.object(b, 'get_page', side_effect=fetch):
+            result = b.collect()
+        self.assertEqual(result['film']['dates'], ['20261103'])
+        self.assertNotIn('20261102', result['film']['listed_dates'])
+
 if __name__ == '__main__':
     unittest.main()

@@ -150,15 +150,20 @@ def collect():
     page = get_page(URL)
     today = datetime.now(ZoneInfo('Africa/Cairo')).strftime('%Y%m%d')
     default_date = selected_booking_date(page)
-    if default_date < today:
-        raise ValueError('Default booking page is older than Cairo date')
-    dates = {default_date}
+    # VOX often keeps yesterday as the default page's selected date for a
+    # while after Cairo midnight, while its dated pages are already fresh.
+    # Then scan the linked dates directly (each dated page is validated
+    # below) and never parse the stale default page itself. A stale page
+    # with no linked dates at or after today is still rejected.
+    dates = {default_date} if default_date >= today else set()
     for href in re.findall(r'href="([^"]+)"', page):
         href = html.unescape(href)
         if href.startswith('/showtimes?'):
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(href).query)
             if query.get('c') == ['city-centre-almaza']:
                 dates.update(d for d in query.get('d', []) if re.fullmatch(r'\d{8}', d) and d >= today)
+    if not dates:
+        raise ValueError('Default booking page is older than Cairo date')
     result = {}
     def read_date(date):
         current_page = page if date == default_date else get_page(URL + '&d=' + date)
