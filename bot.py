@@ -264,14 +264,14 @@ def update_health(state, success):
     notice = None
     if success:
         if state.get('scan_alerted', False):
-            notice = '✅ متابعة مواعيد VOX ألماظة رجعت تشتغل.'
+            notice = '✅ VOX City Centre Almaza showtime monitoring is working again.'
         state['scan_failures'] = 0
         state['scan_alerted'] = False
         state['last_success'] = datetime.now(ZoneInfo('Africa/Cairo')).strftime('%d/%m/%Y %H:%M')
     else:
         state['scan_failures'] = failures + 1
         if state['scan_failures'] >= 3 and not state.get('scan_alerted', False):
-            notice = '⚠️ تعذر تحديث مواعيد VOX ألماظة في 3 فحوصات متتالية. آخر مواعيد محفوظة كما هي؛ هنحاول تلقائيًا ونبلغك لما المتابعة ترجع.'
+            notice = '⚠️ Unable to update VOX City Centre Almaza showtimes in 3 consecutive checks. The last saved showtimes remain unchanged. Monitoring will keep retrying automatically, and you will be notified when it resumes.'
             state['scan_alerted'] = True
     if notice:
         for pending in state['subscribers'].values():
